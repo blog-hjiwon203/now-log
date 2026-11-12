@@ -37,6 +37,8 @@ import org.springframework.web.util.UrlPathHelper;
  * 확장자가 있는 파일과 /api, /uploads, /assets는 여기로 오지 않는다.
  * 비회원도 볼 수 있는 글의 주소면 index.html의 head에 공유 미리보기(Open Graph) 태그를 넣는다 (T072).
  * 블로그 화면은 /@{address}/… 경로다(스텝 21, T117). 그 밖의 주소는 플랫폼 화면이다.
+ * 다른 사람에게 열린 블로그 화면이면 head에 RSS 피드 자동 찾기 태그를 넣는다 (T142, SUB-07). 피드 주소 /@{address}/rss는
+ * RssFeedController가 받는다.
  * 미리보기를 가져가는 서버는 자바스크립트를 실행하지 않아서, React가 그린 내용이 아니라 이 HTML만 본다.
  */
 @Controller
@@ -113,7 +115,8 @@ public class SpaForwardController {
                 // 구독 안내는 화면이 API의 403 SUBSCRIBERS_ONLY로 그린다
                 case PostAccess.Owner owner -> postPage(request, blog, postId);
                 case PostAccess.Visible visible -> visited(blog, request, response, postPage(request, blog, postId));
-                case PostAccess.SubscribersOnly subscribersOnly -> visited(blog, request, response, app(HttpStatus.OK));
+                case PostAccess.SubscribersOnly subscribersOnly ->
+                        visited(blog, request, response, blogApp(request, blog));
             };
         }
 
@@ -133,7 +136,29 @@ public class SpaForwardController {
             // 이사 간 블로그가 삭제되면 리다이렉트도 끊기고 없는 블로그다 (R-08)
             return target.isDeleted() ? app(HttpStatus.NOT_FOUND) : redirect(request, target, path);
         }
-        return isManagePath(path) ? app(HttpStatus.OK) : visited(blog, request, response, app(HttpStatus.OK));
+        return isManagePath(path) ? app(HttpStatus.OK) : visited(blog, request, response, blogApp(request, blog));
+    }
+
+    /** 블로그 화면(관리 화면 말고). 다른 사람에게 열린 블로그면 피드 자동 찾기 태그를 넣은 index.html. */
+    private ResponseEntity<Resource> blogApp(HttpServletRequest request, Blog blog) {
+        return blogVisibilityPolicy.isOpenToOthers(blog)
+                ? html(HttpStatus.OK, withFeedLink(indexHtml(), request, blog))
+                : app(HttpStatus.OK);
+    }
+
+    /**
+     * head 끝에 RSS 자동 찾기 태그를 넣는다(HTML 표준 rel=alternate, RSS Autodiscovery). 링크만 받은 리더가 여기서 피드를 찾는다.
+     * 피드는 비회원 기준이라, 이용 제한·주인 정지로 다른 사람에게 닫힌 블로그(피드가 404)에는 넣지 않는다.
+     * title은 사용자가 쓴 블로그 이름이라 HTML로 이스케이프한다.
+     */
+    private String withFeedLink(String html, HttpServletRequest request, Blog blog) {
+        if (!blogVisibilityPolicy.isOpenToOthers(blog)) {
+            return html;
+        }
+        String tag = "<link rel=\"alternate\" type=\"application/rss+xml\" title=\""
+                + HtmlUtils.htmlEscape(blog.getName()) + "\" href=\""
+                + HtmlUtils.htmlEscape(blogAddressResolver.blogUrl(request, blog, "/rss")) + "\">\n";
+        return html.replace("</head>", tag + "</head>");
     }
 
     /**
@@ -146,11 +171,12 @@ public class SpaForwardController {
         return page;
     }
 
-    /** 글 화면. 비회원도 볼 수 있는 글이면 공유 미리보기 태그를 넣은 index.html, 아니면 그대로. */
+    /** 글 화면. 비회원도 볼 수 있는 글이면 공유 미리보기 태그를 넣은 index.html, 아니면 그대로(자동 찾기 태그는 둘 다). */
     private ResponseEntity<Resource> postPage(HttpServletRequest request, Blog blog, Long postId) {
         return postPreviewService.preview(blog, postId)
-                .map(preview -> html(HttpStatus.OK, withPreview(indexHtml(), preview, request, blog)))
-                .orElseGet(() -> app(HttpStatus.OK));
+                .map(preview -> html(HttpStatus.OK,
+                        withFeedLink(withPreview(indexHtml(), preview, request, blog), request, blog)))
+                .orElseGet(() -> blogApp(request, blog));
     }
 
     /**
