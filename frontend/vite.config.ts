@@ -12,6 +12,8 @@ export default defineConfig({
     proxy: {
       '/api': 'http://localhost:8080',
       '/uploads': 'http://localhost:8080',
+      // 블로그 RSS 피드(/@주소/rss)는 화면이 아니라 서버가 만드는 XML이다. ^로 시작하는 키는 정규식이다
+      '^/@[^/]+/rss$': 'http://localhost:8080',
     },
   },
   test: {
