@@ -150,7 +150,7 @@ public interface PostRepository extends JpaRepository<Post, Long>, JpaSpecificat
     int findLikeCount(@Param("postId") Long postId);
 
     /**
-     * 글 행을 잠근다(SELECT ... FOR UPDATE). 공감·댓글·조회 기록을 넣고 수를 고치는 트랜잭션, 글을 고치는 요청(PostService)이
+     * 글 행을 잠근다(SELECT ... FOR UPDATE). 공감·댓글을 넣고 수를 고치는 트랜잭션, 글을 고치는 요청(PostService)이
      * 맨 먼저 부른다.
      * 같은 글을 고치는 트랜잭션을 차례로 줄 세워, 뒤 요청이 앞 요청이 커밋한 기록과 수를 보고 판단하게 한다.
      * (MySQL에서는 공감·댓글 INSERT의 외래 키 공유 잠금과 수 UPDATE의 배타 잠금이 엇갈려 데드락도 났다. PostgreSQL의 외래 키 확인은

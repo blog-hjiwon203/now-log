@@ -7,6 +7,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.nhnacademy.blog.IntegrationTestSupport;
 import com.nhnacademy.blog.blog.domain.Blog;
 import com.nhnacademy.blog.global.web.VisitorKeys;
+import com.nhnacademy.blog.member.domain.Member;
+import com.nhnacademy.blog.post.application.ViewService;
 import com.nhnacademy.blog.post.domain.Post;
 import com.nhnacademy.blog.post.domain.Visibility;
 import com.nhnacademy.blog.support.TestBlogs;
@@ -19,10 +21,12 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.test.web.servlet.MockMvc;
@@ -30,7 +34,8 @@ import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
 /**
- * 조회 기록과 조회수 (T053, POST-09, spec US5 시나리오 5). 같은 조회자가 5분 안에 다시 열면 한 번만 센다.
+ * 조회 기록과 조회수 (T053·T141, POST-09, spec US5 시나리오 5). 같은 조회자가 5분 안에 다시 열면 한 번만 센다.
+ * 5분 안에 본 적 있는지는 Redis SET NX 표시(view:seen:...)로 가른다.
  */
 class ViewCountIntegrationTest extends IntegrationTestSupport {
 
@@ -49,6 +54,9 @@ class ViewCountIntegrationTest extends IntegrationTestSupport {
     @Autowired
     JdbcTemplate jdbcTemplate;
 
+    @Autowired
+    StringRedisTemplate redis;
+
     Blog blog;
     Post post;
 
@@ -60,16 +68,19 @@ class ViewCountIntegrationTest extends IntegrationTestSupport {
 
     @Test
     void sameViewerWithinFiveMinutesCountsOnce() throws Exception {
-        Cookie[] member = testMembers.loginCookies(testMembers.create());
+        Member viewer = testMembers.create();
+        Long memberId = viewer.getId();
+        Cookie[] member = testMembers.loginCookies(viewer);
 
         view(post, member).andExpect(status().isNoContent());
         view(post, member).andExpect(status().isNoContent());
         assertThat(viewCount(post)).isEqualTo(1);
         assertThat(viewLogRows(post)).isEqualTo(1);
 
-        // 5분이 지난 것으로 기록을 옮기면 다시 센다
-        jdbcTemplate.update("UPDATE view_log SET viewed_at = viewed_at - INTERVAL '6 minute' WHERE post_id = ?",
-                post.getId());
+        // Redis 표시에 5분 TTL이 걸려 있고, 그것이 사라지면(5분이 지나면) 다시 센다
+        String seenKey = ViewService.seenKey(post.getId(), "m:" + memberId);
+        assertThat(redis.getExpire(seenKey, TimeUnit.SECONDS)).isBetween(290L, 300L);
+        redis.delete(seenKey);
         view(post, member).andExpect(status().isNoContent());
         assertThat(viewCount(post)).isEqualTo(2);
         assertThat(viewLogRows(post)).isEqualTo(2);
